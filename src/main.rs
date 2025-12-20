@@ -1,6 +1,11 @@
 use std::sync::mpsc;
 use std::thread;
 
+enum Msg {
+    Data(i32),
+    Done,
+}
+
 fn main() {
     let (tx, rx) = mpsc::channel();
 
@@ -11,9 +16,10 @@ fn main() {
         handles.push(thread::spawn(move || {
             for n in 0..5 {
                 let k = i*10 + n;
-                txc.send(k).unwrap();
+                txc.send(Msg::Data(k)).unwrap();
                 println!("Sent {k}");
             }
+            txc.send(Msg::Done).unwrap();
         }));
     }
 
@@ -22,7 +28,11 @@ fn main() {
 
     // Consumer
     for value in rx {
-        println!("received {}", value);
+        match value {
+            Msg::Data(x) => println!("received {x}"),
+            Msg::Done => println!("producer finished"),
+        }
+        
     }
 
     for h in handles {
