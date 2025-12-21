@@ -18,7 +18,6 @@ fn main() {
     let mut data_map: HashMap<i32, Data> = HashMap::new();
 
     let mut handles = Vec::new();
-    // TODO: spawn 3 producer threads
     for i in 0..3 {
         let txc = tx.clone();
         data_map.insert(i, Data{
@@ -39,7 +38,6 @@ fn main() {
         }));
     }
 
-    // TODO: drop the original sender if needed
     drop(tx);
 
     // Consumer
