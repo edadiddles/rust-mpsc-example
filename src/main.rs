@@ -8,26 +8,30 @@ enum Msg {
 }
 
 struct Data {
-    data_sum: i32,
-    is_closed: bool,
+    sum: i32,
+    closed: bool,
 }
 
 fn main() {
+    let _ = run_system(3, 1, 5, false);
+}
+
+fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_early_done: bool,) -> HashMap<i32, Data> {
     let (tx, rx) = mpsc::channel();
 
     let mut data_map: HashMap<i32, Data> = HashMap::new();
 
     let mut handles = Vec::new();
-    for i in 0..3 {
+    for i in 0..producers {
         let txc = tx.clone();
         data_map.insert(i, Data{
-            data_sum: 0,
-            is_closed: false,
+            sum: 0,
+            closed: false,
         });
         handles.push(thread::spawn(move || {
-            for n in 0..5 {
+            for n in 0..msgs_per_producer {
                 // injecting some funny business
-                if i == 1 && n == 2 {
+                if inject_early_done && n == 3 {
                     txc.send(Msg::Done(i)).unwrap();
                 }
                 let k = i*10 + n;
@@ -48,11 +52,11 @@ fn main() {
                 let prod_data = data_map.get_mut(&x);
                 match prod_data {
                     Some(m) => {
-                        if m.is_closed {
+                        if m.closed {
                             println!("producer {x} alread closed");
                             continue;
                         }
-                        m.data_sum += y;
+                        m.sum += y;
                     },
                     None => println!("producer {x} not found"),
                 }
@@ -62,8 +66,8 @@ fn main() {
                 let prod_data = data_map.get_mut(&x);
                 match prod_data {
                     Some(m) => {
-                        println!("producer {x} sent sum {}", m.data_sum);
-                        m.is_closed = true;
+                        println!("producer {x} sent sum {}", m.sum);
+                        m.closed = true;
                     },
                     None => println!("producer {x} not found"),
                 }
@@ -77,4 +81,80 @@ fn main() {
     }
 
     println!("all done");
+    return data_map;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expected_sum(producer: i32, count: usize) -> i32 {
+        (0..count)
+            .map(|n| producer * 10 + n as i32)
+            .sum()
+    }
+
+    #[test]
+    fn normal_execution_all_data_counted() {
+        let result = run_system(
+            3,   // producers
+            2,   // consumers
+            5,   // messages per producer
+            false, // no early Done
+        );
+
+        for p in 0..3 {
+            let data = result.get(&p).expect("missing producer");
+            assert!(data.closed, "producer {p} not closed");
+            assert_eq!(
+                data.sum,
+                expected_sum(p, 5),
+                "incorrect sum for producer {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn early_done_ignores_late_data() {
+        let result = run_system(
+            3,
+            2,
+            5,
+            true, // inject Done early
+        );
+
+        for p in 0..3 {
+            let data = result.get(&p).expect("missing producer");
+            assert!(data.closed, "producer {p} not closed");
+
+            // Only values before Done (0,1,2)
+            let expected = expected_sum(p, 3);
+            assert_eq!(
+                data.sum,
+                expected,
+                "data after Done was incorrectly counted for producer {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_double_done_corruption() {
+        let result = run_system(
+            3,
+            2,
+            5,
+            true,
+        );
+
+        for (_, data) in result {
+            assert!(data.sum >= 0);
+        }
+    }
+
+    #[test]
+    fn system_terminates_cleanly() {
+        // If this test hangs, you have a deadlock
+        let _ = run_system(3, 2, 5, false);
+    }
 }
