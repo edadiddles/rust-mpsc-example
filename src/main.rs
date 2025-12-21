@@ -7,15 +7,30 @@ enum Msg {
     Done(i32),
 }
 
+struct Data {
+    data_sum: i32,
+    is_closed: bool,
+}
+
 fn main() {
     let (tx, rx) = mpsc::channel();
+
+    let mut data_map: HashMap<i32, Data> = HashMap::new();
 
     let mut handles = Vec::new();
     // TODO: spawn 3 producer threads
     for i in 0..3 {
         let txc = tx.clone();
+        data_map.insert(i, Data{
+            data_sum: 0,
+            is_closed: false,
+        });
         handles.push(thread::spawn(move || {
             for n in 0..5 {
+                // injecting some funny business
+                if i == 1 && n == 2 {
+                    txc.send(Msg::Done(i)).unwrap();
+                }
                 let k = i*10 + n;
                 txc.send(Msg::Data(i, k)).unwrap();
                 println!("Sent {k}");
@@ -28,24 +43,39 @@ fn main() {
     drop(tx);
 
     // Consumer
-    let mut map: HashMap<i32, i32> = HashMap::new();
     for value in rx {
         match value {
             Msg::Data(x, y) => {
                 println!("received {y} from producer {x}");
-                let k = map.get(&x).unwrap_or(&0);
-                map.insert(x, y+k);
+                let prod_data = data_map.get_mut(&x);
+                match prod_data {
+                    Some(m) => {
+                        if m.is_closed {
+                            println!("producer {x} alread closed");
+                            continue;
+                        }
+                        m.data_sum += y;
+                    },
+                    None => println!("producer {x} not found"),
+                }
             },
             Msg::Done(x) => {
                 println!("producer {x} finished");
-                println!("producer {x} sent sum {}", map.get(&x).unwrap_or(&0));
+                let prod_data = data_map.get_mut(&x);
+                match prod_data {
+                    Some(m) => {
+                        println!("producer {x} sent sum {}", m.data_sum);
+                        m.is_closed = true;
+                    },
+                    None => println!("producer {x} not found"),
+                }
             },
         }
         
     }
 
     for h in handles {
-        h.join().unwrap()
+        h.join().unwrap();
     }
 
     println!("all done");
