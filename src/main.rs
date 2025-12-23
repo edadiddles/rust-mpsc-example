@@ -1,12 +1,14 @@
 use std::sync::mpsc;
 use std::thread;
 use std::collections::hash_map::HashMap;
+use std::sync::{Arc, Mutex};
 
 enum Msg {
     Data(i32, i32),
     Done(i32),
 }
 
+#[derive(Debug)]
 struct Data {
     sum: i32,
     closed: bool,
@@ -18,13 +20,13 @@ fn main() {
 
 fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_early_done: bool,) -> HashMap<i32, Data> {
     let (tx, rx) = mpsc::channel();
-
-    let mut data_map: HashMap<i32, Data> = HashMap::new();
+    let shared_map: Arc<Mutex<HashMap<i32, Data>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let mut handles = Vec::new();
     for i in 0..producers {
         let txc = tx.clone();
-        data_map.insert(i, Data{
+        let mut map = shared_map.lock().unwrap();
+        map.insert(i, Data{
             sum: 0,
             closed: false,
         });
@@ -46,6 +48,7 @@ fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_ea
 
     // Consumer
     for value in rx {
+        let mut data_map = shared_map.lock().unwrap();
         match value {
             Msg::Data(x, y) => {
                 println!("received {y} from producer {x}");
@@ -81,7 +84,8 @@ fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_ea
     }
 
     println!("all done");
-    return data_map;
+    let final_map = Arc::try_unwrap(shared_map).unwrap().into_inner().unwrap();
+    return final_map;
 }
 
 
