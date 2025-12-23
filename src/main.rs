@@ -24,12 +24,15 @@ fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_ea
 
     let mut handles = Vec::new();
     for i in 0..producers {
-        let txc = tx.clone();
         let mut map = shared_map.lock().unwrap();
         map.insert(i, Data{
             sum: 0,
             closed: false,
         });
+    }
+
+    for i in 0..producers {
+        let txc = tx.clone();
         handles.push(thread::spawn(move || {
             for n in 0..msgs_per_producer {
                 // injecting some funny business
@@ -48,10 +51,10 @@ fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_ea
 
     // Consumer
     for value in rx {
-        let mut data_map = shared_map.lock().unwrap();
         match value {
             Msg::Data(x, y) => {
                 println!("received {y} from producer {x}");
+                let mut data_map = shared_map.lock().unwrap();
                 let prod_data = data_map.get_mut(&x);
                 match prod_data {
                     Some(m) => {
@@ -66,9 +69,14 @@ fn run_system(producers: i32, _consumers: i32, msgs_per_producer: i32, inject_ea
             },
             Msg::Done(x) => {
                 println!("producer {x} finished");
+                let mut data_map = shared_map.lock().unwrap();
                 let prod_data = data_map.get_mut(&x);
                 match prod_data {
                     Some(m) => {
+                        if m.closed {
+                            println!("producer {x} already closed");
+                            continue;
+                        }
                         println!("producer {x} sent sum {}", m.sum);
                         m.closed = true;
                     },
