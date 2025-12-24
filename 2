@@ -7,10 +7,9 @@ use std::time::Duration;
 pub enum Msg {
     Data { producer: i32, value: i32 } ,
     Done { producer: i32 },
-    Shutdown,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Data {
     sum: i32,
     closed: bool,
@@ -21,51 +20,74 @@ fn main() {
 }
 
 fn run_system(
-    num_producers: i32,
-    num_consumers: i32,
+    producers: i32,
+    consumers: i32,
     msgs_per_producer: i32,
     inject_early_done: bool,
 ) -> HashMap<i32, Data> {
     let (tx, rx) = mpsc::channel();
     let shared_map: Arc<Mutex<HashMap<i32, Data>>> = Arc::new(Mutex::new(HashMap::new()));
 
-
-    let mut consumers = Vec::new();
-
-    
-    // Consumer
-    for id in 0..num_consumers {
-        let (worker_tx, worker_rx) = mpsc::channel();
-        consumers.push(worker_tx);
-
-        let map = shared_map.clone();
-        thread::spawn(move || {
-            consumer_loop(id, worker_rx, map);
-        });
+    let mut handles = Vec::new();
+    for i in 0..producers {
+        let mut map = shared_map.lock().unwrap();
+        map.insert(
+            i,
+            Data {
+                sum: 0,
+                closed: false,
+            },
+        );
     }
 
-    // dispatcher
-    let dispatcher_handle = thread::spawn(move || {
-        let mut next = 0;
-        for msg in rx {
-            consumers[next].send(msg).unwrap();
-            next = (next+1) % consumers.len();
-        }
-    });
-
-    // producer
-    let mut handles: Vec<thread::JoinHandle<()>> = Vec::new();
-    for i in 0..num_producers {
-        let txc = tx.clone();
-        handles.push(spawn_producer(i, msgs_per_producer, inject_early_done, txc)); 
+    for i in 0..producers {
+        
     }
 
     drop(tx);
 
-    dispatcher_handle.join().unwrap();
-    //for h in handles {
-    //    h.join().unwrap();
-    //}
+    // Consumer
+    for _ in 0..consumers {
+        for value in rx {
+            match value {
+                Msg::Data(x, y) => {
+                    println!("received {y} from producer {x}");
+                    let mut data_map = shared_map.lock().unwrap();
+                    let prod_data = data_map.get_mut(&x);
+                    match prod_data {
+                        Some(m) => {
+                            if m.closed {
+                                println!("producer {x} alread closed");
+                                continue;
+                            }
+                            m.sum += y;
+                        }
+                        None => println!("producer {x} not found"),
+                    }
+                }
+                Msg::Done(x) => {
+                    println!("producer {x} finished");
+                    let mut data_map = shared_map.lock().unwrap();
+                    let prod_data = data_map.get_mut(&x);
+                    match prod_data {
+                        Some(m) => {
+                            if m.closed {
+                                println!("producer {x} already closed");
+                                continue;
+                            }
+                            println!("producer {x} sent sum {}", m.sum);
+                            m.closed = true;
+                        }
+                        None => println!("producer {x} not found"),
+                    }
+                }
+            }
+        }
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
 
     println!("all done");
     let final_map = Arc::try_unwrap(shared_map).unwrap().into_inner().unwrap();
@@ -87,37 +109,7 @@ fn spawn_producer(id: i32, msgs_per_producer: i32, inject_early_done: bool, tx: 
     }) 
 }
 
-pub fn process_msg(msg: Msg, state: &mut HashMap<i32, Data>) -> bool {
-    match msg {
-        Msg::Data { producer, value } => {
-            let entry = state.entry(producer).or_default();
-            if entry.closed {
-                return false;
-            }
-            entry.sum += value;
-        }
-        Msg::Done { producer } => {
-            let entry = state.entry(producer).or_default();
-            if entry.closed {
-                return false;
-            }
-            entry.closed = true;
-        }
-        Msg::Shutdown => {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-pub fn consumer_loop(_id: i32, rx: mpsc::Receiver<Msg>, shared_state: Arc<Mutex<HashMap<i32, Data>>>) {
-    while let Ok(msg) = rx.recv() {
-        let mut state = shared_state.lock().unwrap();
-        if process_msg(msg, &mut state) {
-            break;
-        }
-    }
+pub fn process_msg(msg: Msg, state: &mut HashMap<i32, Data>) {
 }
 
 
